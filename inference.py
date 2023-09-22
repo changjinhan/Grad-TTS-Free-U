@@ -36,6 +36,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--checkpoint', type=str, required=True, help='path to a checkpoint of Grad-TTS')
     parser.add_argument('-t', '--timesteps', type=int, required=False, default=10, help='number of timesteps of reverse diffusion')
     parser.add_argument('-s', '--speaker_id', type=int, required=False, default=None, help='speaker id for multispeaker model')
+    parser.add_argument('-fs', '--freeu_scales', type=float, nargs='*', required=False, default=None, help='skip scale and backbone scale in diffusion U-Net')
     args = parser.parse_args()
     
     if not isinstance(args.speaker_id, type(None)):
@@ -74,7 +75,7 @@ if __name__ == '__main__':
             
             t = dt.datetime.now()
             y_enc, y_dec, attn = generator.forward(x, x_lengths, n_timesteps=args.timesteps, temperature=1.5,
-                                                   stoc=False, spk=spk, length_scale=0.91, freeu_scales=[1.0, 1.4])
+                                                   stoc=False, spk=spk, length_scale=0.91, freeu_scales=args.freeu_scales)
             t = (dt.datetime.now() - t).total_seconds()
             print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
 
