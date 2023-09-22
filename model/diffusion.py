@@ -170,10 +170,10 @@ class GradLogPEstimator2d(BaseModule):
                      Upsample(dim_in)]))
         self.final_block = Block(dim, dim)
         self.final_conv = torch.nn.Conv2d(dim, 1, 1)
-
+    
     def skip_fft_modulation(self, features, scale, radius_thresh=0.5):
         radius_thresh_mask = features >= radius_thresh 
-        radius_thresh_mask = radius_thresh_mask.int().to(features.device)
+        radius_thresh_mask = radius_thresh_mask.float()
         scale_mask = radius_thresh_mask.masked_fill(radius_thresh_mask == 0, scale)
         features = torch.fft.ifft2(torch.fft.fft2(features) * scale_mask) # FFTs for last 2 dimensions of (B, C, n_mel_channels, T_feats)
         features = features.type(torch.float)
