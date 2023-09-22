@@ -10,4 +10,4 @@ Coming Soon.
 ## References
 
 * Grad-TTS, official github repository: [link](https://github.com/huawei-noah/Speech-Backbones/tree/main/Grad-TTS).
-* FreeU, official github repository: [link](https://github.com/ChenyangSi/FreeU).
+* FreeU, official github repository: [link](https://github.com/ChenyangSi/FreeU) (There is not official code for now - 2023/09/22).
