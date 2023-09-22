@@ -1,8 +1,3 @@
-<p align="center">
-    <img src="resources/reverse-diffusion.gif" alt="drawing" width="500"/>
-</p>
-
-
 # Grad-TTS-Free-U
 
 Unofficial implementation of the **FreeU** + Official implementation of the **Grad-TTS**
