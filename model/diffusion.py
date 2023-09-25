@@ -191,7 +191,7 @@ class GradLogPEstimator2d(BaseModule):
 
     def backbone_modulation(self, x, scale):
         C = x.size(1) # number of channels
-        x = x[:, :C//2, :, :] * scale
+        x[:, :C//2, :, :] = x[:, :C//2, :, :] * scale
         return x
 
     def forward(self, x, mask, mu, t, spk=None, skip_scales=None, backbone_scales=None):
