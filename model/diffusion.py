@@ -171,22 +171,30 @@ class GradLogPEstimator2d(BaseModule):
         self.final_block = Block(dim, dim)
         self.final_conv = torch.nn.Conv2d(dim, 1, 1)
     
-    def skip_fft_modulation(self, features, scale, radius_thresh=0.5):
-        radius_thresh_mask = features >= radius_thresh 
-        radius_thresh_mask = radius_thresh_mask.float()
-        scale_mask = radius_thresh_mask.masked_fill(radius_thresh_mask == 0, scale)
-        features = torch.fft.ifft2(torch.fft.fft2(features) * scale_mask) # FFTs for last 2 dimensions of (B, C, n_mel_channels, T_feats)
-        features = features.type(torch.float)
-        return features
+    def skip_fft_modulation(self, x, scale, threshold=1):
+        # FFT
+        x_freq = torch.fft.fftn(x, dim=(-2, -1))
+        x_freq = torch.fft.fftshift(x_freq, dim=(-2, -1))
+        
+        B, C, H, W = x_freq.shape
+        mask = torch.ones((B, C, H, W)).cuda() 
 
-    def backbone_modulation(self, features, scale):
-        C = features.size(1) # number of channels
-        first_half_features = features[:, :int(C/2), :, :] * scale
-        last_half_features = features[:, int(C/2):, :, :]
-        features = torch.cat((first_half_features, last_half_features), dim=1)
-        return features
+        crow, ccol = H // 2, W //2
+        mask[..., crow - threshold:crow + threshold, ccol - threshold:ccol + threshold] = scale
+        x_freq = x_freq * mask
 
-    def forward(self, x, mask, mu, t, spk=None, skip_scale=None, backbone_scale=None):
+        # IFFT
+        x_freq = torch.fft.ifftshift(x_freq, dim=(-2, -1))
+        x_filtered = torch.fft.ifftn(x_freq, dim=(-2, -1)).real
+        
+        return x_filtered
+
+    def backbone_modulation(self, x, scale):
+        C = x.size(1) # number of channels
+        x = x[:, :C//2, :, :] * scale
+        return x
+
+    def forward(self, x, mask, mu, t, spk=None, skip_scales=None, backbone_scales=None):
         if not isinstance(spk, type(None)):
             s = self.spk_mlp(spk)
         
@@ -218,13 +226,20 @@ class GradLogPEstimator2d(BaseModule):
         x = self.mid_block2(x, mask_mid, t)
 
         for resnet1, resnet2, attn, upsample in self.ups:
+            h = hiddens.pop()
+            if (skip_scales is not None) and (backbone_scales is not None):
+                # ------------------- FreeU code -------------------
+                # Only operate on the first two stages
+                if h.shape[1] == self.dim * self.dim_mults[-1]: 
+                    h = self.skip_fft_modulation(h, skip_scales[0])
+                    x = self.backbone_modulation(x, backbone_scales[0])
+                if h.shape[1] == self.dim * self.dim_mults[-2]:
+                    h = self.skip_fft_modulation(h, skip_scales[1])
+                    x = self.backbone_modulation(x, backbone_scales[1])
+                # --------------------------------------------------
+            
+            x = torch.cat((x, h), dim=1)
             mask_up = masks.pop()
-            if (skip_scale is not None) and (backbone_scale is not None):
-                h = self.skip_fft_modulation(hiddens.pop(), skip_scale)
-                x = self.backbone_modulation(x, backbone_scale)
-                x = torch.cat((x, h), dim=1)
-            else:
-                x = torch.cat((x, hiddens.pop()), dim=1)
 
             x = resnet1(x, mask_up, t)
             x = resnet2(x, mask_up, t)
@@ -273,7 +288,7 @@ class Diffusion(BaseModule):
         return xt * mask, z * mask
 
     @torch.no_grad()
-    def reverse_diffusion(self, z, mask, mu, n_timesteps, stoc=False, spk=None, skip_scale=None, backbone_scale=None):
+    def reverse_diffusion(self, z, mask, mu, n_timesteps, stoc=False, spk=None, skip_scales=None, backbone_scales=None):
         h = 1.0 / n_timesteps
         xt = z * mask
         for i in range(n_timesteps):
@@ -283,23 +298,22 @@ class Diffusion(BaseModule):
             noise_t = get_noise(time, self.beta_min, self.beta_max, 
                                 cumulative=False)
             if stoc:  # adds stochastic term
-                dxt_det = 0.5 * (mu - xt) - self.estimator(xt, mask, mu, t, spk, skip_scale, backbone_scale)
+                dxt_det = 0.5 * (mu - xt) - self.estimator(xt, mask, mu, t, spk, skip_scales, backbone_scales)
                 dxt_det = dxt_det * noise_t * h
                 dxt_stoc = torch.randn(z.shape, dtype=z.dtype, device=z.device,
                                        requires_grad=False)
                 dxt_stoc = dxt_stoc * torch.sqrt(noise_t * h)
                 dxt = dxt_det + dxt_stoc
             else:
-                dxt = 0.5 * (mu - xt - self.estimator(xt, mask, mu, t, spk, skip_scale, backbone_scale))
+                dxt = 0.5 * (mu - xt - self.estimator(xt, mask, mu, t, spk, skip_scales, backbone_scales))
                 dxt = dxt * noise_t * h
             xt = (xt - dxt) * mask
         return xt
 
     @torch.no_grad()
-    def forward(self, z, mask, mu, n_timesteps, stoc=False, spk=None, freeu_scales=None):
-        if freeu_scales:
-            skip_scale, backbone_scale = freeu_scales
-            return self.reverse_diffusion(z, mask, mu, n_timesteps, stoc, spk, skip_scale, backbone_scale)
+    def forward(self, z, mask, mu, n_timesteps, stoc=False, spk=None, skip_scales=None, backbone_scales=None):
+        if (skip_scales is not None) and (backbone_scales is not None):
+            return self.reverse_diffusion(z, mask, mu, n_timesteps, stoc, spk, skip_scales, backbone_scales)
         else:
             return self.reverse_diffusion(z, mask, mu, n_timesteps, stoc, spk)
 
